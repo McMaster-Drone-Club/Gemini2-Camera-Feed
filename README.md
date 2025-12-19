@@ -4,17 +4,13 @@ Minimal tests for the Orbbec Gemini‑2 using `pyorbbecsdk`.
 
 ## Files
 - `main.py` 
-    - basic pipeline test (requires `sudo` for higher perms)
-    - from Gemini's documentation
-
-- `distance.py` 
-    - color + depth view with center‑point distance + rolling average
-    - `ChatGPT` generated
-
+    - Contains live circle detection code that is working
+- `utils.py` 
+    - Utility functions -- do not edit
+      
 ## Run
 ```bash
-sudo python3 main.py
-sudo python3 distance.py
+python main.py
 ```
 
 ## Dependencies
