@@ -1,1 +1,8 @@
 Log/
+pyorbbecsdk_src/
+*.jpg
+*.png
+*python_version
+__pycache__/
+.vscode/
+build/
