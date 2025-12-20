@@ -19,11 +19,11 @@ model = YOLO("yolov10m.pt")
 light_blue = (95, 80, 50)
 dark_blue  = (130, 255, 255)
 
-light_purple = (130, 80, 50)
-dark_purple = (143, 255, 255)
+light_purple = (125, 40, 50)
+dark_purple = (155, 255, 255)
 
-light_green = (50, 80, 50)
-dark_green = (70, 255, 255)
+light_green = (40, 50, 50)
+dark_green = (75, 255, 255)
 
 light_red1 = (0, 80, 50)
 dark_red1  = (10, 255, 255)
@@ -31,8 +31,11 @@ dark_red1  = (10, 255, 255)
 light_red2 = (170, 80, 50)
 dark_red2  = (179, 255, 255)
 
-light_yellow = (25, 90, 60)
-dark_yellow = (32, 255, 255)
+light_orange = (15, 80, 50)
+dark_orange = (25, 255, 255)
+
+light_yellow = (20, 40, 60)
+dark_yellow = (35, 255, 255)
 
 landmarks = {}
 lock = threading.Lock()
@@ -82,6 +85,8 @@ def segmentation(mask_code, image_stream=None, image_path='', bounding_box_color
         masks.append(cv.inRange(hsv_img, light_yellow, dark_yellow))
     if 'p' in mask_code:
         masks.append(cv.inRange(hsv_img, light_purple, dark_purple))
+    if 'o' in mask_code:
+        masks.append(cv.inRange(hsv_img, light_orange, dark_orange))
 
     size = len(masks)
     
@@ -154,6 +159,7 @@ def main():
     cv.resizeWindow("QuickStart Viewer", window_width, window_height)
 
     frameCount =  0
+    noCircleCount = 0
 
     while True:
         try:
@@ -168,6 +174,7 @@ def main():
             frames  = frames.as_frame_set()
 
             frameCount += 1
+            noCircleCount += 1
 
             # Get color frame
             color_frame = frames.get_color_frame()
@@ -184,10 +191,11 @@ def main():
                 print("Depth format is not Y16")
                 continue
             
-            color_image, circle = segmentation('ry', image_stream=color_image, bounding_box_color=(0, 0, 0))
+            color_image, circle = segmentation('g', image_stream=color_image, bounding_box_color=(0, 0, 0))
 
-            if circle is None:
+            if circle is None and noCircleCount % 10 == 0:
                 with lock:
+                    noCircleCount = 0
                     landmarks.clear()
         
             # Process depth data
@@ -219,16 +227,8 @@ def main():
                 frameCount = 0
 
 
-            # Create depth visualization
-            depth_image = cv.normalize(depth_data, None, 0, 255, cv.NORM_MINMAX, dtype=cv.CV_8U)
-            depth_image = cv.applyColorMap(depth_image, cv.COLORMAP_JET)
-            depth_image = cv.addWeighted(color_image, 0.5, depth_image, 0.5, 0)
-
-
             # Resize and combine images
             color_image_resized = cv.resize(color_image, (window_width // 2, window_height))
-            depth_image_resized = cv.resize(depth_image, (window_width // 2, window_height))
-            combined_image = np.hstack((color_image_resized, depth_image_resized))
 
             if (depth_frame.get_width() != color_frame.get_width() or depth_frame.get_height() != color_frame.get_height()):
                 raise Exception("WARNING: depth and color not same size after alignment!")
@@ -247,12 +247,12 @@ def main():
                 i = 0
 
                 for line in landmark_format:
-                    cv.putText(combined_image, line, (30, 30 + 30 * i), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
+                    cv.putText(color_image_resized, line, (30, 30 + 30 * i), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
                     i += 1
             else:
-                cv.putText(combined_image, landmark_format, (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
+                cv.putText(color_image_resized, landmark_format, (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
             
-            cv.imshow("Live drone feed", combined_image)
+            cv.imshow("Live drone feed", color_image_resized)
 
             if cv.waitKey(1) in [ord('q'), ESC_KEY]:
                 break
@@ -307,9 +307,6 @@ def yolo_inference(image_array, circle, depth_matrix, depth_intrinsics, extrinsi
 
                 with lock:
                     landmarks[str(name)] = round(distance / 1000, 3)
-        else:
-            with lock:
-                landmarks.clear()
 
     except Exception as e:
         print(e)
