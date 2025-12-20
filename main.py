@@ -2,7 +2,7 @@ import cv2 as cv
 import numpy as np
 from pyorbbecsdk import *
 from utils import frame_to_bgr_image
-from math import pi
+from math import pi, radians, isfinite, tan
 from sys import exit
 from ultralytics import YOLO
 
@@ -11,7 +11,18 @@ MIN_DEPTH = 20  # 20mm
 MAX_DEPTH = 10000  # 10000mm = 10 m
 PRINT_INTERVAL = 1
 AVG_INTERVAL = 30
-YOLO_INTERVAL = 20
+YOLO_INTERVAL = 20# Depth FOV
+HFOV_DEPTH_DEG = 91.0
+VFOV_DEPTH_DEG = 66.0
+# RGB/Color FOV
+HFOV_COLOR_DEG = 86.0
+VFOV_COLOR_DEG = 55.0
+
+# Precompute radians
+HFOV_DEPTH_RAD = radians(HFOV_DEPTH_DEG)
+VFOV_DEPTH_RAD = radians(VFOV_DEPTH_DEG)
+HFOV_COLOR_RAD = radians(HFOV_COLOR_DEG)
+VFOV_COLOR_RAD = radians(VFOV_COLOR_DEG)
 
 model = YOLO("yolov10m.pt") 
 
@@ -143,6 +154,7 @@ def main():
             if color_frame is None:
                 continue
             color_image = frame_to_bgr_image(color_frame)
+            raw = color_image.copy()
 
             # Get depth frame
             depth_frame = frames.get_depth_frame()
@@ -157,9 +169,8 @@ def main():
             if circle and frameCount % YOLO_INTERVAL == 0:
                 # crop out circle
                 x, y, r = circle
-                color_image_copy = color_image.copy()
-                color_image_copy = cv.circle(color_image_copy, (x, y), r, (0, 0, 0))
-                yolo_inference(color_image_copy)
+                raw_copy = cv.circle(raw, (x, y), r, (0, 0, 0), -1)
+                yolo_inference(raw_copy, circle)
                 frameCount = 0
 
             # Process depth data
@@ -207,10 +218,50 @@ def main():
     exit()
 
 
-def yolo_inference(image_array):    
+def pixel_to_camera_xyz(dx, dy, depth_m, d_w, d_h):
+    """
+    Map depth pixel (dx, dy, depth_m) to camera coordinates (X, Y, Z),
+    using the DEPTH FOV.
+    """
+    if depth_m is None or depth_m <= 0 or not isfinite(depth_m):
+        return None
+
+    cx_d = d_w / 2.0
+    cy_d = d_h / 2.0
+
+    nx = (dx - cx_d) / (d_w / 2.0)
+    ny = (dy - cy_d) / (d_h / 2.0)
+
+    theta_x = nx * (HFOV_DEPTH_RAD / 2.0)
+    theta_y = ny * (VFOV_DEPTH_RAD / 2.0)
+
+    X = depth_m * tan(theta_x)
+    Y = depth_m * tan(theta_y)
+    Z = depth_m
+
+    return np.array([X, Y, Z], dtype=np.float32)
+
+
+def yolo_inference(image_array, circle):    
     results = model(image_array)
-    annotated_frame = results[0].plot()
-    cv.imshow("YOLO11 Detection", annotated_frame)
+    
+    # get x and y coordinate of landmark
+    # get distance to circle
+    
+    result = results[0]
+    noBoxes = result.boxes is None or len(result.boxes) == 0
+
+    if not noBoxes:
+        for box in result.boxes: # each box is an actual objects 
+            pos = box.xyxy[0].cpu().numpy()
+            box_x_avg = int((pos[0] + pos[2]) / 2)
+            box_y_avg = int((pos[1] + pos[3]) / 2)
+
+            print(f"Object position: {box_x_avg.item(), box_y_avg.item()} Circle location: {circle[0], circle[1]} ")
+
+        annotated_frame = result.plot()
+        cv.imshow("YOLO11 Detection", annotated_frame)
+
 
 
 if __name__ == "__main__":
