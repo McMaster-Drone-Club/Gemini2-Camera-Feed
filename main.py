@@ -5,6 +5,7 @@ from utils import frame_to_bgr_image
 from math import pi, sqrt
 from sys import exit
 from ultralytics import YOLO
+import threading
 
 ESC_KEY = 27
 MIN_DEPTH = 20  # 20mm
@@ -32,6 +33,10 @@ dark_red2  = (179, 255, 255)
 
 light_yellow = (25, 90, 60)
 dark_yellow = (32, 255, 255)
+
+landmarks = {}
+lock = threading.Lock()
+yolo_busy = False
 
 
 # computes circularity of shape; returns True if its >thresh (1 is perfect circle)
@@ -111,6 +116,8 @@ def segmentation(mask_code, image_stream=None, image_path='', bounding_box_color
 
 
 def main():
+    global landmarks, yolo_busy
+
     pipeline = Pipeline()
     config = Config()
     
@@ -147,7 +154,6 @@ def main():
     cv.resizeWindow("QuickStart Viewer", window_width, window_height)
 
     frameCount =  0
-    landmarks = None
 
     while True:
         try:
@@ -181,7 +187,8 @@ def main():
             color_image, circle = segmentation('ry', image_stream=color_image, bounding_box_color=(0, 0, 0))
 
             if circle is None:
-                landmarks = None
+                with lock:
+                    landmarks.clear()
         
             # Process depth data
             width = depth_frame.get_width()
@@ -195,10 +202,22 @@ def main():
             if circle and frameCount % YOLO_INTERVAL == 0:
                 # crop out circle
                 x, y, r = circle
-                raw_copy = cv.circle(raw, (x, y), r, (0, 0, 0), -1)
-                #print(f"Depth_data: {depth_data}")
-                landmarks = yolo_inference(raw_copy, circle, depth_data, depth_intrinsics, extrinsic)
+
+                raw_copy = raw.copy()
+                cv.circle(raw_copy, (x, y), r, (0, 0, 0), -1)
+
+                start = False
+
+                with lock:
+                    if not yolo_busy:
+                        yolo_busy = True
+                        start = True
+                
+                if start:
+                    threading.Thread(target=yolo_inference, args=(raw_copy.copy(), circle, depth_data.copy(), depth_intrinsics, extrinsic), daemon=True).start()
+
                 frameCount = 0
+
 
             # Create depth visualization
             depth_image = cv.normalize(depth_data, None, 0, 255, cv.NORM_MINMAX, dtype=cv.CV_8U)
@@ -212,14 +231,17 @@ def main():
             combined_image = np.hstack((color_image_resized, depth_image_resized))
 
             if (depth_frame.get_width() != color_frame.get_width() or depth_frame.get_height() != color_frame.get_height()):
-                print("WARNING: depth and color not same size after alignment!")
+                raise Exception("WARNING: depth and color not same size after alignment!")
 
             landmark_format = "No landmarks detected"
+            
+            with lock:
+                lm = landmarks.copy()
 
-            if landmarks and len(landmarks) > 0:
+            if lm and len(lm) > 0:
                 landmark_format = ""                
-                for key in landmarks.keys():
-                    landmark_format += str(key) + " : " + str(landmarks[key]) + " meters\n"
+                for key in lm.keys():
+                    landmark_format += str(key) + " : " + str(lm[key]) + " meters\n"
 
                 landmark_format = landmark_format.split("\n")
                 i = 0
@@ -229,8 +251,8 @@ def main():
                     i += 1
             else:
                 cv.putText(combined_image, landmark_format, (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
-
-            cv.imshow("QuickStart Viewer", combined_image)
+            
+            cv.imshow("Live drone feed", combined_image)
 
             if cv.waitKey(1) in [ord('q'), ESC_KEY]:
                 break
@@ -255,43 +277,47 @@ def get_distance(point1, point2):
 
 
 def yolo_inference(image_array, circle, depth_matrix, depth_intrinsics, extrinsic):    
-    results = model(image_array)
-    
-    # get x and y coordinate of landmark
-    # get distance to circle
-    
-    result = results[0]
-    noBoxes = result.boxes is None or len(result.boxes) == 0
+    global landmarks, yolo_busy, lock
 
-    landmarks = {}
+    try:
+        results = model(image_array)
+        result = results[0]
+        noBoxes = result.boxes is None or len(result.boxes) == 0
 
-    if not noBoxes:
-        for box in result.boxes: # each box is an actual objects 
-            pos = box.xyxy[0].cpu().numpy()
-            box_x_avg = int((pos[0] + pos[2]) / 2)
-            box_y_avg = int((pos[1] + pos[3]) / 2)
+        if not noBoxes:
+            for box in result.boxes: # each box is an actual objects 
+                pos = box.xyxy[0].cpu().numpy()
+                box_x_avg = int((pos[0] + pos[2]) / 2)
+                box_y_avg = int((pos[1] + pos[3]) / 2)
 
-            target_x_pixel, target_y_pixel, _ = circle
+                target_x_pixel, target_y_pixel, _ = circle
 
-            depth_target = depth_matrix[target_y_pixel, target_x_pixel]
-            depth_landmark = depth_matrix[box_y_avg, box_x_avg]
+                depth_target = depth_matrix[target_y_pixel, target_x_pixel]
+                depth_landmark = depth_matrix[box_y_avg, box_x_avg]
 
-            if depth_target == 0 or depth_landmark == 0:
-                continue
+                if depth_target == 0 or depth_landmark == 0:
+                    continue
 
-            target_realworld = transformation2dto3d(OBPoint2f(target_x_pixel, target_y_pixel), depth_target, depth_intrinsics, extrinsic)
-            landmark_realworld = transformation2dto3d(OBPoint2f(box_x_avg, box_y_avg), depth_landmark, depth_intrinsics, extrinsic)
+                target_realworld = transformation2dto3d(OBPoint2f(target_x_pixel, target_y_pixel), depth_target, depth_intrinsics, extrinsic)
+                landmark_realworld = transformation2dto3d(OBPoint2f(box_x_avg, box_y_avg), depth_landmark, depth_intrinsics, extrinsic)
 
-            name = model.names[int(box.cls)]
+                name = model.names[int(box.cls)]
 
-            distance = get_distance(target_realworld, landmark_realworld)
-            #print(f"Object name: {name} Distance (mm): {distance}")
-            landmarks[str(name)] = round(distance / 1000, 3)
+                distance = get_distance(target_realworld, landmark_realworld)
 
-        #annotated_frame = result.plot()
-        #cv.imshow("YOLO11 Detection", annotated_frame)
+                with lock:
+                    landmarks[str(name)] = round(distance / 1000, 3)
+        else:
+            with lock:
+                landmarks.clear()
 
-    return landmarks
+    except Exception as e:
+        print(e)
+
+    finally:
+        with lock:
+            yolo_busy = False
+
 
 
 if __name__ == "__main__":
