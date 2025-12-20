@@ -6,3 +6,4 @@ pyorbbecsdk_src/
 __pycache__/
 .vscode/
 build/
+*.pt

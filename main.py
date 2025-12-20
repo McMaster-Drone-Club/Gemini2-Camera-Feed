@@ -4,13 +4,16 @@ from pyorbbecsdk import *
 from utils import frame_to_bgr_image
 from math import pi
 from sys import exit
+from ultralytics import YOLO
 
 ESC_KEY = 27
 MIN_DEPTH = 20  # 20mm
 MAX_DEPTH = 10000  # 10000mm = 10 m
 PRINT_INTERVAL = 1
 AVG_INTERVAL = 30
+YOLO_INTERVAL = 20
 
+model = YOLO("yolov10m.pt") 
 
 light_blue = (95, 80, 50)
 dark_blue  = (130, 255, 255)
@@ -27,17 +30,28 @@ dark_red1  = (10, 255, 255)
 light_red2 = (170, 80, 50)
 dark_red2  = (179, 255, 255)
 
-light_yellow = (25, 70, 50)
+light_yellow = (25, 90, 60)
 dark_yellow = (32, 255, 255)
 
+circles = [] # (x, y, r)
 
 
-def isCircle(r, area, thresh=0.8):
-    return thresh * pi * r ** 2 <= area
+# computes circularity of shape; returns True if its >thresh (1 is perfect circle)
+def isCircle(r, area, perim, thresh=0.7, min_area=500, min_radius=20):
+    if r < min_radius:
+        return False
+    
+    if area < min_area:
+        return False
+    
+    roundness = 4 * pi * area / (perim ** 2)
+    return roundness >= thresh
+
 
 
 def segmentation(mask_code, image_stream=None, image_path='', bounding_box_color=(0, 0, 255)):
     img = None
+    circle = None
 
     if image_path != '':
         img = cv.imread(image_path)
@@ -47,7 +61,10 @@ def segmentation(mask_code, image_stream=None, image_path='', bounding_box_color
         raise Exception("Must supply either image stream (Matlike) or image file path (str)")
 
     # hsv makes defining masks easier because it ignores shadows
-    hsv_img = cv.cvtColor(img, cv.COLOR_BGR2HSV)
+    
+    blurred_img= cv.GaussianBlur(img,(5,5),0)
+    hsv_img = cv.cvtColor(blurred_img, cv.COLOR_BGR2HSV)
+     
 
     masks = []
 
@@ -67,28 +84,32 @@ def segmentation(mask_code, image_stream=None, image_path='', bounding_box_color
     
     combined_mask = masks[0]
     if size > 1:
-        for i in range(len(masks) - 1):
-            combined_mask = cv.bitwise_or(masks[i], masks[i + 1])
+        for next_mask in masks[1:]:
+            combined_mask = cv.bitwise_or(combined_mask, next_mask)
 
 
     kernel = np.ones((5, 5), np.uint8)
 
     # filtering out noise by erosion _+ dilation
     combined_mask_processed = cv.morphologyEx(combined_mask, cv.MORPH_OPEN, kernel)
-    contours, hierarchy = cv.findContours(combined_mask_processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    combined_mask_processed = cv.morphologyEx(combined_mask, cv.MORPH_CLOSE, kernel)
 
+    contours, hierarchy = cv.findContours(combined_mask_processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+     
 
     # check if each contour is a circle or not
     for contour in contours:
-        area = cv.contourArea(contour)
+        contour_area = cv.contourArea(contour)
+        contour_perim = cv.arcLength(contour, True)
         (x, y),r = cv.minEnclosingCircle(contour)
         center = (int(x),int(y))
         r = int(r)
 
-        if isCircle(r, area): # draw bounding box around circles only
+        if isCircle(r, contour_area, contour_perim): # draw bounding box around circles only
             cv.circle(img,center,r,bounding_box_color,3)
+            circle = int(x), int(y), int(r)
 
-    return img
+    return img, circle
 
 
 def main():
@@ -107,11 +128,15 @@ def main():
     center_distance_avg = 0
     distances = [0] * AVG_INTERVAL
 
+    frameCount =  0
+
     while True:
         try:
             frames = pipeline.wait_for_frames(100)
             if frames is None:
                 continue
+
+            frameCount += 1
 
             # Get color frame
             color_frame = frames.get_color_frame()
@@ -127,7 +152,15 @@ def main():
                 print("Depth format is not Y16")
                 continue
             
-            color_image = segmentation('ry', image_stream=color_image, bounding_box_color=(0, 0, 0))
+            color_image, circle = segmentation('ry', image_stream=color_image, bounding_box_color=(0, 0, 0))
+
+            if circle and frameCount % YOLO_INTERVAL == 0:
+                # crop out circle
+                x, y, r = circle
+                color_image_copy = color_image.copy()
+                color_image_copy = cv.circle(color_image_copy, (x, y), r, (0, 0, 0))
+                yolo_inference(color_image_copy)
+                frameCount = 0
 
             # Process depth data
             width = depth_frame.get_width()
@@ -171,6 +204,14 @@ def main():
     cv.destroyAllWindows()
     pipeline.stop()
     print("Pipeline stopped and all windows closed.")
+    exit()
+
+
+def yolo_inference(image_array):    
+    results = model(image_array)
+    annotated_frame = results[0].plot()
+    cv.imshow("YOLO11 Detection", annotated_frame)
+
 
 if __name__ == "__main__":
     main()
