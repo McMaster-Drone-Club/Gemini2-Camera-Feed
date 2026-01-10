@@ -1,13 +1,18 @@
+# global constants class
+
 class AppConfig():
+    # using yolo medium
     def __init__(self, model_path="yolov10m.pt", mask_code="rgbpgoy"):
         self.min_depth = 20  # 20mm
         self.max_depth = 10000  # 10000mm = 10 m
 
+        # run yolo every n frames upon target detection
         self.yolo_interval = 20
         
         self.window_width = 1280
         self.window_height = 720
 
+        # HSV format (Hue, saturation, value)
         self.light_blue = (95, 80, 50)
         self.dark_blue  = (130, 255, 255)
 

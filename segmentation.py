@@ -3,14 +3,15 @@ import cv2 as cv
 import numpy as np
 
 class Circle:
-    def __init__(self, dims, roundness, circle_id):
+    def __init__(self, dims, roundness, circle_id, color):
         self.x = int(dims[0])
         self.y = int(dims[1])
         self.r = int(dims[2])
          
         self.roundness = roundness
-        self.min_eq = 0.0003
+        self.min_eq = 0.0003 # circularity threshold
         self.id = circle_id
+        self.color = color
 
     # computes circularity of shape (1 is perfect circle)
     @staticmethod
@@ -24,26 +25,60 @@ class Circle:
             return 0.0
         
         return roundness
+    
+    @staticmethod
+    def computeSolidity(contour, area):
+        hull = cv.convexHull(contour)
+        hull_area = cv.contourArea(hull)
+        
+        if hull_area > 1e-6:
+            return area / hull_area
+        
+        return 0.0
+
 
     # returns True if its >thresh 
     @staticmethod
-    def isCircle(r, area, perim, thresh=0.7, min_area=500, min_radius=20):
+    def isCircle(r, area, perim, contour, thresh1=0.8, thresh2=(0.7, 1.0), thresh3=(0.9, 1.0), min_area=500, min_radius=20):
         if r < min_radius:
             return False
         
         if area < min_area:
             return False
+        
+        computed_area = pi * r ** 2
+
+        if computed_area < 1e-6:
+            return False
+
+        fill = area / computed_area
+        if fill < thresh2[0] or fill > thresh2[1]:
+            return False
+        
+        solidity = Circle.computeSolidity(contour, area)
+        if solidity < thresh3[0] or solidity > thresh3[1]:
+            return False
 
         roundness = Circle.computeRoundness(area, perim)        
-        return roundness >= thresh
+        return roundness >= thresh1
     
+    # comparing circles via roundness. NOTE: None object is treated as smallest possible circle
     def __gt__(self, other):
+        if other is None:
+            return True
+        
         return self.roundness - other.roundness > self.min_eq
     
     def __lt__(self, other):
+        if other is None:
+            return False
+        
         return other.roundness - self.roundness > self.min_eq
     
     def __eq__(self, other):
+        if other is None:
+            return False
+
         return abs(self.roundness - other.roundness) < self.min_eq
 
 
@@ -51,33 +86,34 @@ class ColorSegmenter:
     def __init__(self, config):
         self.config = config
 
-    def segment(self, image, mask_code):
+    def segment(self, image, mask_code, k=3):
         masks = []
-        best_circle = None
+        top_circles = [None] * k 
 
-        blurred_img= cv.GaussianBlur(image,(5,5),0)
+        blurred_img = cv.GaussianBlur(image,(5,5),0) # 5 by 5 kernel
         hsv_img = cv.cvtColor(blurred_img, cv.COLOR_BGR2HSV)
 
         if 'r' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_red1, self.config.dark_red1))
-            masks.append(cv.inRange(hsv_img, self.config.light_red2, self.config.dark_red2))
+            masks.append(('r', cv.inRange(hsv_img, self.config.light_red1, self.config.dark_red1)))
+            masks.append(('r', cv.inRange(hsv_img, self.config.light_red2, self.config.dark_red2)))
         if 'b' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_blue, self.config.dark_blue))
+            masks.append(('b', cv.inRange(hsv_img, self.config.light_blue, self.config.dark_blue)))
         if 'g' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_green, self.config.dark_green))
+            masks.append(('g', cv.inRange(hsv_img, self.config.light_green, self.config.dark_green)))
         if 'y' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_yellow, self.config.dark_yellow))
+            masks.append(('y', cv.inRange(hsv_img, self.config.light_yellow, self.config.dark_yellow)))
         if 'p' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_purple, self.config.dark_purple))
+            masks.append(('p', cv.inRange(hsv_img, self.config.light_purple, self.config.dark_purple)))
         if 'o' in mask_code:
-            masks.append(cv.inRange(hsv_img, self.config.light_orange, self.config.dark_orange))
+            masks.append(('o', cv.inRange(hsv_img, self.config.light_orange, self.config.dark_orange)))
 
         for mask in masks:
-            kernel = np.ones((5, 5), np.uint8)
+            color, hsv_range = mask
 
-            # filtering out noise by erosion _+ dilation
-            mask_processed = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
-            mask_processed = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+            kernel = np.ones((5, 5), np.uint8)
+            # filtering out noise by erosion + dilation
+            mask_processed = cv.morphologyEx(hsv_range, cv.MORPH_OPEN, kernel)
+            mask_processed = cv.morphologyEx(mask_processed, cv.MORPH_CLOSE, kernel)
 
             contours, _ = cv.findContours(mask_processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
@@ -88,13 +124,16 @@ class ColorSegmenter:
                 (x, y),r = cv.minEnclosingCircle(contour)
                 r = int(r)
                 
-                if Circle.isCircle(r, contour_area, contour_perim):
+                if Circle.isCircle(r, contour_area, contour_perim, contour):
                     roundness = Circle.computeRoundness(contour_area, contour_perim)
                     circle_id = f"{r}:{int(y)}:{int(x)}"
-                    circle = Circle((x, y, r), roundness, circle_id)
+                    circle = Circle((x, y, r), roundness, circle_id, color)
 
-                    if not best_circle or circle > best_circle:
-                        best_circle = circle
+                    for i in range(len(top_circles)):
+                        if circle > top_circles[i]:
+                            top_circles.insert(i, circle)
+                            top_circles = top_circles[:k]
+                            break
 
-        return best_circle
+        return top_circles
 

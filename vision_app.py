@@ -4,6 +4,8 @@ import cv2 as cv
 class VisionApp:
     def __init__(self, camera, segmenter, yolo_worker, state, renderer, app_config):
         self.camera =  camera
+
+ 
         self.segmenter = segmenter
         self.yolo_worker = yolo_worker
         self.state = state
@@ -24,23 +26,37 @@ class VisionApp:
         image = self.frame_bundle.color_image
         mask_code = self.app_config.mask_code
 
-        self.circle = self.segmenter.segment(image, mask_code)
-    
-        if self.circle:
-            cv.circle(image, (self.circle.x, self.circle.y), self.circle.r, (0, 0, 0), 3)
+        self.top_circles = self.segmenter.segment(image, mask_code)
 
-            if self.frame_count % self.app_config.yolo_interval == 0:
-                self.submit_yolo(self.circle, self.frame_bundle, self.calibration)
-
-            snapshot = self.state.snapshot()
-            self.renderer.render(image, snapshot, True)
-                    
-        else:
+        none_count = 0
+        for circle in self.top_circles:
+            if circle is None:
+                none_count += 1
+        
+        if none_count == len(self.top_circles):
             self.no_circle_count += 1
             snapshot = self.state.snapshot()
             self.renderer.render(image, snapshot, False)
+        else:
+            self.no_circle_count = 0
+            
+            filtered_circles = [c for c in self.top_circles if c is not None]
+            sorted_circles = sorted(filtered_circles, reverse=True)
+            best_circle = sorted_circles[0]
 
-        
+            # only run yolo on best circle in top_circles list
+            if self.frame_count % self.app_config.yolo_interval == 0:
+                self.submit_yolo(best_circle, self.frame_bundle, self.calibration)
+
+            for circle in sorted_circles:
+                if circle != best_circle:
+                    cv.circle(image, (circle.x, circle.y), circle.r, (0, 0, 0), 3)         
+                else:
+                    cv.circle(image, (circle.x, circle.y), circle.r, (180, 105 ,255), 3)    
+
+            snapshot = self.state.snapshot()
+            self.renderer.render(image, snapshot, True)
+
 
     def submit_yolo(self, circle, frame_bundle, calibration):
         if not self.state.is_busy():

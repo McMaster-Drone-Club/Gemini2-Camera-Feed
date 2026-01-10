@@ -56,10 +56,11 @@ class OrbbecCamera:
         self.config = Config()
         self.app_config = app_config
         self.align_filter = AlignFilter(align_to_stream=OBStreamType.COLOR_STREAM)
-
-    def start_and_sync(self):
         self.calibration = Calibration(self)
 
+
+    # must call before using camera to align color and depth capture
+    def start_and_sync(self):   
         try:
             self.config.enable_stream(self.calibration.color_profile)
             self.config.enable_stream(self.calibration.depth_profile)
