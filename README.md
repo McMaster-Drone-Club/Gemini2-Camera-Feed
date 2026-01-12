@@ -51,10 +51,18 @@ Designed to be robust to:
    - Distance annotations
 
 ---
+## Project Structure
 
-## Repository Structure
-
-<pre> ├── main.py # Entry point ├── camera.py # Orbbec camera interface and frame handling ├── segmentation.py # HSV masking and circle detection ├── ransac_worker.py # Plane estimation using RANSAC ├── vision_app.py # Main application loop ├── renderer.py # Visualization and overlays ├── shared_state.py # Thread-safe shared state ├── yolo_worker.py # Optional YOLO landmark detection ├── config.py # Tunable parameters └── README.md </pre>
+- **main.py** - Entry point
+- **camera.py** - Orbbec camera interface and frame handling
+- **segmentation.py** - HSV masking and circle detection
+- **ransac_worker.py** - Plane estimation using RANSAC
+- **vision_app.py** - Main application loop
+- **renderer.py** - Visualization and overlays
+- **shared_state.py** - Thread-safe shared state
+- **yolo_worker.py** - Optional YOLO landmark detection
+- **config.py** - Tunable parameters
+- **README.md** - This file
 
 ## Circle Detection Notes
 
