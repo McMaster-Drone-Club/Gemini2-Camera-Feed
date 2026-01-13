@@ -22,24 +22,21 @@ class Plane:
         self.C = self.n[2]
         self.D = -(self.A * p1[0] + self.B * p1[1] + self.C * p1[2]) 
 
-        self.inliers = []
+        self.inliers_uv = []
+        self.inliers_xyz = []
 
-        self.degenerate = self.A ** 2 + self.B ** 2 + self.C ** 2 <= 1e-6
-  
+      
     
     def distance(self, p1): # returns None ==> collinear
         x0, y0, z0 = p1      
 
-        if self.degenerate:
-            return None
-
-        return abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
-
-    def save_inliers(self, inlier):
-        self.inliers.append(inlier)
+        return np.abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
 
     def get_hull(self):
-        points = np.array(self.inliers, dtype=np.int32).reshape(-1, 1, 2)
+        if len(self.inliers_uv) < 3:
+            return None
+
+        points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
         return cv.convexHull(points)
     
 
@@ -59,12 +56,12 @@ class RansacJob:
 
         for u in range(0, x_max, sample_rate):
             for v in range(0, y_max, sample_rate):
-                p = self.convert_to_xyz((u, v))
+                p = self.convert_to_xyz(u, v)
                 if p is None:
                     continue
 
                 uv.append((u, v))
-                xyz.append(p)
+                xyz.append((p.x, p.y, p.z))
 
         self.uv = np.array(uv, dtype=np.int32)
         self.xyz = np.array(xyz, dtype=np.float32)
@@ -97,7 +94,6 @@ class RansacWorker:
         
     def run_job(self, job, thresh=50, n=300, thresh2=0.9):
         try:
-            y_max, x_max, _ = job.image_array.shape
             best_plane = None
 
             for _ in range(n):
@@ -108,43 +104,27 @@ class RansacWorker:
                     i2 = randint(0, len(job.uv) - 1)
                     i3 = randint(0, len(job.uv) - 1)
 
-                p1 = job.uv[i1]
-                p2 = job.uv[i2]
-                p3 = job.uv[i3]
-
-                p1_xyz = job.xyz[p1]
-                p2_xyz = job.xyz[p2]
-                p3_xyz = job.xyz[p3]
-
-                if p1_xyz is None or p2_xyz is None or p3_xyz is None:
-                    continue
-
-                p1_xyz = p1_xyz.x, p1_xyz.y, p1_xyz.z
-                p2_xyz = p2_xyz.x, p2_xyz.y, p2_xyz.z
-                p3_xyz = p3_xyz.x, p3_xyz.y, p3_xyz.z
+                p1_xyz = job.xyz[i1]
+                p2_xyz = job.xyz[i2]
+                p3_xyz = job.xyz[i3]
 
                 plane = Plane(p1_xyz, p2_xyz, p3_xyz)
                 
-                if plane.degenerate:
+                if plane.A ** 2 + plane.B ** 2 + plane.C ** 2 <= 1e-6:
                     continue
                 
-                for u in range(0, x_max, job.sample_rate):
-                    for v in range(0, y_max, job.sample_rate):
-                        point_xyz = job.xyz[(u, v)]  # u, v = x, y
+                # array of distances from each xyz coordinate to plane
+                distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                # filter for distances
+                mask = distances < thresh
+                # indexing just the uv's and xyz's that pass the filter
+                plane.inliers_uv = job.uv[mask]
+                plane.inliers_xyz = job.xyz[mask]
 
-                        if point_xyz is None:
-                            continue
-
-                        point_xyz = point_xyz.x, point_xyz.y, point_xyz.z
-                        distance = plane.distance(point_xyz)
-
-                        if distance is not None and distance < thresh:
-                            plane.save_inliers((u, v))
-
-                if best_plane is None or len(plane.inliers) > len(best_plane.inliers):
+                if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):
                     best_plane = plane
 
-            if best_plane is None or len(best_plane.inliers) < 3:
+            if best_plane is None or len(best_plane.inliers_uv) < 3:
                 self.state.clear_wall()
                 return None
             
@@ -152,7 +132,7 @@ class RansacWorker:
             return best_plane
         
         except Exception as e:
-            print("Failed to run RANSAC")
+            print("Failed to run RANSAC " + repr(e))
             self.state.clear_wall()
             return None
         

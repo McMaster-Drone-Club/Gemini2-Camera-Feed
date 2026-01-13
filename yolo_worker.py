@@ -87,7 +87,7 @@ class YoloWorker:
                 return
 
         except Exception as e:
-            print(e)
+            print("Exception from yolo's run_job" + repr(e))
 
         finally:
             self.shared_state.set_busy(False)
