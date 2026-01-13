@@ -7,7 +7,7 @@ class Renderer:
         self.app_config = app_config
 
 
-    def render(self, image, snapshot, circle=True):
+    def render(self, image, snapshot, circle, plane):
         if circle:
             lm = snapshot["landmarks"]
 
@@ -27,6 +27,10 @@ class Renderer:
             
         else:
             cv.putText(image, "Searching for targets ... ", (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
+        
+        if plane:
+            hull = snapshot["wall"]
+            cv.drawContours(image, [hull], -1, (0, 255, 0), 2)
         
         cv.imshow("Live drone feed", image)
 

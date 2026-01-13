@@ -18,33 +18,39 @@ class FrameBundle:
         self.camera = camera
 
     def capture_frames(self):
-        self.frames = self.camera.pipeline.wait_for_frames(100)
-        if not self.frames:
-            raise Exception("Could not capture frames")
+        for _ in range(50):
+            frames = self.camera.pipeline.wait_for_frames(500)
+            if frames is None:
+                continue
 
-        self.frames = self.camera.align_filter.process(self.frames)
-        if not self.frames:
-            raise Exception("Could not align frames")
+            aligned = self.camera.align_filter.process(frames)
+            if aligned is None:
+                continue
 
-        self.frames  = self.frames.as_frame_set()
+            frameset  = aligned.as_frame_set()
+            if frameset is None:
+                continue
 
-        # Get color frame
-        self.color_frame = self.frames.get_color_frame()
-        if self.color_frame is None:
-            raise Exception("Could not get color frame")
-        
-        self.color_image = self.camera.frame_to_bgr_image(self.color_frame)
+            # Get color and depth frames
+            self.color_frame = frameset.get_color_frame()
+            self.depth_frame = frameset.get_depth_frame()
 
-        # Get depth frame
-        self.depth_frame = self.frames.get_depth_frame()
-        if self.depth_frame is None:
-            raise Exception("Could not get depth frame")
-        if self.depth_frame.get_format() != OBFormat.Y16:
-            raise Exception("Depth format is not Y16")
-        
-        self.depth_u16 = np.frombuffer(self.depth_frame.get_data(), dtype=np.uint16).reshape(self.get_frame_dims())
-        self.depth_u16 = np.where((self.depth_u16 > self.camera.app_config.min_depth) & (self.depth_u16 < self.camera.app_config.max_depth), self.depth_u16, 0).astype(np.uint16)
-    
+            if self.color_frame is None or self.depth_frame is None:
+                continue
+            
+            self.color_image = self.camera.frame_to_bgr_image(self.color_frame)
+            
+            if self.depth_frame.get_format() != OBFormat.Y16:
+                raise Exception("Depth format is not Y16")
+            
+            depth_u16 = np.frombuffer(self.depth_frame.get_data(), dtype=np.uint16).reshape(self.get_frame_dims())
+            depth_u16 = np.where((depth_u16 > self.camera.app_config.min_depth) & (depth_u16 < self.camera.app_config.max_depth), depth_u16, 0).astype(np.uint16)
+            self.depth_u16 = depth_u16.copy()
+
+            return
+            
+        raise Exception("Could not capture frames")
+
     def get_frame_dims(self): # H, W
         return self.depth_frame.get_height(), self.depth_frame.get_width()
     
@@ -69,6 +75,9 @@ class OrbbecCamera:
             self.pipeline.start(self.config)
         except Exception as e:
             print(e)
+            return False
+        
+        return True
         
     def read(self):
         try:
@@ -81,39 +90,43 @@ class OrbbecCamera:
     
     def stop(self):
         self.pipeline.stop()
-
+        
+    
     def frame_to_bgr_image(self, frame):
         width = frame.get_width()
         height = frame.get_height()
         color_format = frame.get_format()
-        data = np.asanyarray(frame.get_data())
-        image = None
-
+        data = np.frombuffer(frame.get_data(), dtype=np.uint8)
+        
         if color_format == OBFormat.RGB:
-            image = np.resize(data, (height, width, 3))
-            image = cv.cvtColor(image, cv.COLOR_RGB2BGR)
+            image = data.reshape((height, width, 3))
+            return cv.cvtColor(image, cv.COLOR_RGB2BGR)
+        
         elif color_format == OBFormat.BGR:
-            image = np.resize(data, (height, width, 3))
-            image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+            return data.reshape((height, width, 3))
+    
         elif color_format == OBFormat.YUYV:
-            image = np.resize(data, (height, width, 2))
-            image = cv.cvtColor(image, cv.COLOR_YUV2BGR_YUYV)
+            image = data.reshape((height, width, 2))
+            return cv.cvtColor(image, cv.COLOR_YUV2BGR_YUYV)
+        
         elif color_format == OBFormat.MJPG:
-            image = cv.imdecode(data, cv.IMREAD_COLOR)
+            return cv.imdecode(data, cv.IMREAD_COLOR)
+            
         elif color_format == OBFormat.I420:
-            image = i420_to_bgr(data, width, height)
-            return image
+            return i420_to_bgr(data, width, height)
+            
         elif color_format == OBFormat.NV12:
-            image = nv12_to_bgr(data, width, height)
-            return image
+            return nv12_to_bgr(data, width, height)
+            
         elif color_format == OBFormat.NV21:
-            image = nv21_to_bgr(data, width, height)
-            return image
+            return nv21_to_bgr(data, width, height)
+            
         elif color_format == OBFormat.UYVY:
-            image = np.resize(data, (height, width, 2))
-            image = cv.cvtColor(image, cv.COLOR_YUV2BGR_UYVY)
+            image = data.reshape((height, width, 2))
+            return cv.cvtColor(image, cv.COLOR_YUV2BGR_UYVY)
+
         else:
             print("Unsupported color format: {}".format(color_format))
             return None
-        
-        return image
+
+ 

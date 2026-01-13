@@ -9,7 +9,7 @@ class Circle:
         self.r = int(dims[2])
          
         self.roundness = roundness
-        self.min_eq = 0.0003 # circularity threshold
+        self.min_eq = 0.003 # circularity threshold
         self.id = circle_id
         self.color = color
 
@@ -39,7 +39,7 @@ class Circle:
 
     # returns True if its >thresh 
     @staticmethod
-    def isCircle(r, area, perim, contour, thresh1=0.8, thresh2=(0.7, 1.0), thresh3=(0.9, 1.0), min_area=500, min_radius=20):
+    def isCircle(r, area, perim, contour, thresh1=0.8, thresh2=(0.7, 1.0), thresh3=(0.9, 1.0), min_area=500, min_radius=20):   
         if r < min_radius:
             return False
         
@@ -110,10 +110,11 @@ class ColorSegmenter:
         for mask in masks:
             color, hsv_range = mask
 
-            kernel = np.ones((5, 5), np.uint8)
+            kernel1 = np.ones((7, 7), np.uint8)
+            kernel2 = np.ones((3, 3), np.uint8)
             # filtering out noise by erosion + dilation
-            mask_processed = cv.morphologyEx(hsv_range, cv.MORPH_OPEN, kernel)
-            mask_processed = cv.morphologyEx(mask_processed, cv.MORPH_CLOSE, kernel)
+            mask_processed = cv.morphologyEx(hsv_range, cv.MORPH_CLOSE, kernel1)
+            mask_processed = cv.morphologyEx(mask_processed, cv.MORPH_OPEN, kernel2)
 
             contours, _ = cv.findContours(mask_processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
@@ -123,8 +124,10 @@ class ColorSegmenter:
                 contour_perim = cv.arcLength(contour, True)
                 (x, y),r = cv.minEnclosingCircle(contour)
                 r = int(r)
-                
-                if Circle.isCircle(r, contour_area, contour_perim, contour):
+
+                roundness = Circle.computeRoundness(contour_area, contour_perim)
+
+                if Circle.isCircle(r, contour_area, contour_perim, contour):                 
                     roundness = Circle.computeRoundness(contour_area, contour_perim)
                     circle_id = f"{r}:{int(y)}:{int(x)}"
                     circle = Circle((x, y, r), roundness, circle_id, color)
