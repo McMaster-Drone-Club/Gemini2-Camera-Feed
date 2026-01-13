@@ -33,7 +33,7 @@ class Plane:
         if self.degenerate:
             return None
 
-        return abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / sqrt(self.A ** 2 + self.B ** 2 + self.C ** 2)
+        return abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
 
     def save_inliers(self, inlier):
         self.inliers.append(inlier)
@@ -52,15 +52,23 @@ class RansacJob:
         self.depth_intrinsics = calibration.depth_intrinsics
         self.extrinsic = calibration.extrinsic
         self.sample_rate = sample_rate
-        self.point_mapping = {}
-
+        
         y_max, x_max, _ = self.image_array.shape
+        uv = []
+        xyz = []
+
         for u in range(0, x_max, sample_rate):
             for v in range(0, y_max, sample_rate):
-                self.point_mapping[(u, v)] = self.convert_to_xyz(u, v) # u, v = x, y
+                p = self.convert_to_xyz((u, v))
+                if p is None:
+                    continue
 
-        self.sample_uv = list(self.point_mapping.keys())
-        self.sample_uv = [uv for uv in self.sample_uv if self.point_mapping[uv] is not None]
+                uv.append((u, v))
+                xyz.append(p)
+
+        self.uv = np.array(uv, dtype=np.int32)
+        self.xyz = np.array(xyz, dtype=np.float32)
+
 
     # returns relative distance data for a pixel u, v
     # index array as y coord, x coord
@@ -96,17 +104,17 @@ class RansacWorker:
                 i1, i2, i3 = 0, 0, 0
 
                 while i1 == i2 or i2 == i3 or i1 == i3:
-                    i1 = randint(0, len(job.sample_uv) - 1)
-                    i2 = randint(0, len(job.sample_uv) - 1)
-                    i3 = randint(0, len(job.sample_uv) - 1)
+                    i1 = randint(0, len(job.uv) - 1)
+                    i2 = randint(0, len(job.uv) - 1)
+                    i3 = randint(0, len(job.uv) - 1)
 
-                p1 = job.sample_uv[i1]
-                p2 = job.sample_uv[i2]
-                p3 = job.sample_uv[i3]
+                p1 = job.uv[i1]
+                p2 = job.uv[i2]
+                p3 = job.uv[i3]
 
-                p1_xyz = job.point_mapping[p1]
-                p2_xyz = job.point_mapping[p2]
-                p3_xyz = job.point_mapping[p3]
+                p1_xyz = job.xyz[p1]
+                p2_xyz = job.xyz[p2]
+                p3_xyz = job.xyz[p3]
 
                 if p1_xyz is None or p2_xyz is None or p3_xyz is None:
                     continue
@@ -122,7 +130,7 @@ class RansacWorker:
                 
                 for u in range(0, x_max, job.sample_rate):
                     for v in range(0, y_max, job.sample_rate):
-                        point_xyz = job.point_mapping[(u ,v)] # u, v = x, y
+                        point_xyz = job.xyz[(u, v)]  # u, v = x, y
 
                         if point_xyz is None:
                             continue
