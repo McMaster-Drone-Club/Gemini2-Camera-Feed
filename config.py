@@ -2,7 +2,7 @@
 
 class AppConfig():
     # using yolo medium
-    def __init__(self, model_path="yolov10m.pt", mask_code="rgbpgoy"):
+    def __init__(self, model_path="yolov10n.pt", mask_code="rp"):
         self.min_depth = 20  # 20mm
         self.max_depth = 10000  # 10000mm = 10 m
 
@@ -16,7 +16,7 @@ class AppConfig():
         self.light_blue = (95, 80, 50)
         self.dark_blue  = (130, 255, 255)
 
-        self.light_purple = (125, 40, 50)
+        self.light_purple = (115, 40, 50)
         self.dark_purple = (155, 255, 255)
 
         self.light_green = (40, 50, 50)

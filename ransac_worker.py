@@ -1,6 +1,9 @@
 from pyorbbecsdk import *
 from math import sqrt
 from random import randint
+import cv2 as cv
+import numpy as np
+from threading import Thread
 
 class Plane:
     # Ax + By + Cz + d = 0
@@ -19,39 +22,50 @@ class Plane:
         self.C = self.n[2]
         self.D = -(self.A * p1[0] + self.B * p1[1] + self.C * p1[2]) 
 
-        self.inliers = []
+        self.inliers_uv = []
+        self.inliers_xyz = []
 
-        self.degenerate = self.A ** 2 + self.B ** 2 + self.C ** 2 <= 1e-6
-  
+      
     
     def distance(self, p1): # returns None ==> collinear
         x0, y0, z0 = p1      
 
-        if self.degenerate:
+        return np.abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
+
+    def get_hull(self):
+        if len(self.inliers_uv) < 3:
             return None
 
-        return abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / sqrt(self.A ** 2 + self.B ** 2 + self.C ** 2)
+        points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
+        return cv.convexHull(points)
+    
 
-    def save_inliers(self, inlier):
-        self.inliers.append(inlier)
-
-
-class RansacWorker:
+class RansacJob:
     def __init__(self, frame_bundle, calibration, image_array, sample_rate=8):
+        self.frame_bundle = frame_bundle
+        self.calibration = calibration
         self.image_array = image_array
         self.depth_matrix = frame_bundle.depth_u16
         self.depth_intrinsics = calibration.depth_intrinsics
         self.extrinsic = calibration.extrinsic
         self.sample_rate = sample_rate
-        self.point_mapping = {}
-
+        
         y_max, x_max, _ = self.image_array.shape
+        uv = []
+        xyz = []
+
         for u in range(0, x_max, sample_rate):
             for v in range(0, y_max, sample_rate):
-                self.point_mapping[(u, v)] = self.convert_to_xyz(u, v) # u, v = x, y
+                p = self.convert_to_xyz(u, v)
+                if p is None:
+                    continue
 
-        self.sample_uv = list(self.point_mapping.keys())
-        self.sample_uv = [uv for uv in self.sample_uv if uv is not None]
+                uv.append((u, v))
+                xyz.append((p.x, p.y, p.z))
+
+        self.uv = np.array(uv, dtype=np.int32)
+        self.xyz = np.array(xyz, dtype=np.float32)
+
 
     # returns relative distance data for a pixel u, v
     # index array as y coord, x coord
@@ -62,54 +76,68 @@ class RansacWorker:
             return None
         
         return transformation2dto3d(OBPoint2f(u, v), z, self.depth_intrinsics, self.extrinsic)
+
+
+class RansacWorker:
+    def __init__(self, state):
+        self.state = state
         
-    def run_job(self, thresh=50, n=300, thresh2=0.9):
-        y_max, x_max, _ = self.image_array.shape
-        best_plane = None
+    
+    def submit_job(self, job):
+        if self.state.is_ransac_busy():
+            return False
+        
+        self.state.set_ransac_busy(True)
+        Thread(target=self.run_job, args=(job, 50, 300, 0.9), daemon=True).start()
+        return True
 
-        for _ in range(n):
-            i1 = randint(0, len(self.sample_uv) - 1)
-            i2 = randint(0, len(self.sample_uv) - 1)
-            i3 = randint(0, len(self.sample_uv) - 1)
+        
+    def run_job(self, job, thresh=50, n=300, thresh2=0.9):
+        try:
+            best_plane = None
 
-            p1 = self.sample_uv[i1]
-            p2 = self.sample_uv[i2]
-            p3 = self.sample_uv[i3]
+            for _ in range(n):
+                i1, i2, i3 = 0, 0, 0
 
-            p1_xyz = self.point_mapping[p1]
-            p2_xyz = self.point_mapping[p2]
-            p3_xyz = self.point_mapping[p3]
+                while i1 == i2 or i2 == i3 or i1 == i3:
+                    i1 = randint(0, len(job.uv) - 1)
+                    i2 = randint(0, len(job.uv) - 1)
+                    i3 = randint(0, len(job.uv) - 1)
 
-            if p1_xyz is None or p2_xyz is None or p3_xyz is None:
-                continue
+                p1_xyz = job.xyz[i1]
+                p2_xyz = job.xyz[i2]
+                p3_xyz = job.xyz[i3]
 
-            p1_xyz = p1_xyz.x, p1_xyz.y, p1_xyz.z
-            p2_xyz = p2_xyz.x, p2_xyz.y, p2_xyz.z
-            p3_xyz = p3_xyz.x, p3_xyz.y, p3_xyz.z
+                plane = Plane(p1_xyz, p2_xyz, p3_xyz)
+                
+                if plane.A ** 2 + plane.B ** 2 + plane.C ** 2 <= 1e-6:
+                    continue
+                
+                # array of distances from each xyz coordinate to plane
+                distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                # filter for distances
+                mask = distances < thresh
+                # indexing just the uv's and xyz's that pass the filter
+                plane.inliers_uv = job.uv[mask]
+                plane.inliers_xyz = job.xyz[mask]
 
-            plane = Plane(p1_xyz, p2_xyz, p3_xyz)
+                if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):
+                    best_plane = plane
+
+            if best_plane is None or len(best_plane.inliers_uv) < 3:
+                self.state.clear_wall()
+                return None
             
-            if plane.degenerate:
-                continue
-            
-            for u in range(0, x_max, self.sample_rate):
-                for v in range(0, y_max, self.sample_rate):
-                    point_xyz = self.point_mapping[(u ,v)] # u, v = x, y
-
-                    if point_xyz is None:
-                        continue
-
-                    point_xyz = point_xyz.x, point_xyz.y, point_xyz.z
-                    distance = plane.distance(point_xyz)
-
-                    if distance is not None and distance < thresh:
-                        plane.save_inliers((u, v))
-
-            if best_plane is None or len(plane.inliers) > len(best_plane.inliers):
-                best_plane = plane
-
-        return best_plane
-
+            self.state.update_wall(best_plane.get_hull())
+            return best_plane
+        
+        except Exception as e:
+            print("Failed to run RANSAC " + repr(e))
+            self.state.clear_wall()
+            return None
+        
+        finally:
+            self.state.set_ransac_busy(False)
 
         
         
