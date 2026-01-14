@@ -167,3 +167,10 @@ optionally refit using all inliers (more accurate)
 
 """
 
+"""
+
+to filter out ground and other 'horizontal' surfaces, check if |n * g| is close to 1 because 
+then the plane's normal and gravity vector will be close to perpendicular
+
+apply a rotation matrix to account for the drone's pitch and yaw
+"""
