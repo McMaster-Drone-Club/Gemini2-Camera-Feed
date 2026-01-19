@@ -141,13 +141,6 @@ class RansacWorker:
 
         
         
-        # pick 3 points from image array
-        # convert them to 3d coordintes
-        # compute the plane
-        # compute distance
-        #count points with distance < threshold (these are inliers)
-        #keep the plane with the most inliers
-
 
 """
 
