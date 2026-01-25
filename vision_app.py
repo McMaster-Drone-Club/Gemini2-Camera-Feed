@@ -38,6 +38,9 @@ class VisionApp:
                 self.no_circle_count += 1
                 snapshot = self.state.snapshot()
                 self.renderer.render(image, snapshot, False, False)
+                # Still run RANSAC even when no circle is detected to detect other objects
+                if self.frame_count % self.app_config.yolo_interval == 0:
+                    self.submit_ransac(self.frame_bundle, self.calibration, image)
             else:
                 self.no_circle_count = 0
                 

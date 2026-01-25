@@ -9,6 +9,8 @@ class Renderer:
 
     def render(self, image, snapshot, circle, plane):
         try:
+            lm = snapshot["landmarks"]
+
             if circle:
                 lm = snapshot["landmarks"]
 
@@ -27,8 +29,18 @@ class Renderer:
                     cv.putText(image, "No landmarks detected", (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
                 
             else:
-                cv.putText(image, "Searching for targets ... ", (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
-            
+                # Display landmarks even without circle detection, or show searching message
+                if lm and len(lm) > 0:
+                    landmark_format = ""
+                    for key in lm.keys():
+                        landmark_format += str(key) + " : " + str(lm[key]) + " meters\n"
+
+                    landmark_format = landmark_format.split("\n")
+                    i = 0
+
+                    for line in landmark_format:
+                        cv.putText(image, line, (30, 30 + 30 * i), cv.FONT_HERSHEY_PLAIN, 2, color=(0, 255, 255), thickness=3)
+                        i += 1
             if plane:
                 hull = snapshot["wall"]
                 cv.drawContours(image, [hull], -1, (0, 255, 0), 2)

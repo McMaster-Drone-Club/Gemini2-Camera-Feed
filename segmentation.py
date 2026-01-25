@@ -39,7 +39,7 @@ class Circle:
 
     # returns True if its >thresh 
     @staticmethod
-    def isCircle(r, area, perim, contour, thresh1=0.8, thresh2=(0.7, 1.0), thresh3=(0.9, 1.0), min_area=500, min_radius=20):   
+    def isCircle(r, area, perim, contour, thresh1=0.7, thresh2=(0.6, 1.1), thresh3=(0.85, 1.0), min_area=300, min_radius=15):   
         if r < min_radius:
             return False
         
