@@ -31,8 +31,8 @@ class Renderer:
             
             if plane:
                 wall = snapshot["wall"]
-                hull = wall.hull
-                cv.drawContours(image, [hull], -1, (0, 255, 0), 2)
+                if wall is not None and wall.hull is not None:
+                    cv.drawContours(image, [hull], -1, (0, 255, 0), 2)
             
             cv.imshow("Live drone feed", image)
         except Exception as e:

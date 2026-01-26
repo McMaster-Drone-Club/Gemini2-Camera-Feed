@@ -3,14 +3,15 @@ import sys
 
 class Mavlink:
     # establishing mavlink connection
-    def __init__(self):
+    def __init__(self, state):
         self.baud_rate = 57600 # change later
         self.connection_string = "udpin:localhost:14540" # change to UART connection string
         self.conn = mavutil.mavlink_connection(self.connection_string, baud=self.baud_rate) 
         self.conn.wait_heartbeat()
+        self.state = state
 
     # send the message once then stream continuously
-    def send_message(self, message_id, rate): # mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE_QUATERNION
+    def send_message(self, message_id, rate): # mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE
         rate = int(1e6 / rate)
 
         message = self.conn.mav.command_long_encode(
@@ -29,8 +30,8 @@ class Mavlink:
             
         self.conn.mav.send(message)
 
-    def stream_data(self, message): # mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE_QUATERNION
-        msg = self.conn.recv_match(type=message, blocking=True) # 'ATTITUDE_QUATERNION'
+    def stream_data(self, message): # mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE
+        msg = self.conn.recv_match(type=message, blocking=True) # 'ATTITUDE'
 
         if not msg:
             return None
@@ -41,6 +42,20 @@ class Mavlink:
             return None
         else:
             return msg
+
+    def run(self, message):
+        while True:
+            telem = self.stream_data(message)
+
+            if telem is None:
+                continue
+
+            pitch = telem.pitch
+            roll = telem.roll
+
+            self.state.update_attitude(pitch, roll)
+        
+
 
 
 

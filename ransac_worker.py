@@ -89,44 +89,17 @@ class RansacJob:
 
 
 class RansacWorker:
-    def __init__(self, state):
+    def __init__(self, state, mav):
         self.state = state
-        self.g = np.array([0.0, 0.0, -1.0]) # representation of gravity in 3D world space, needs to be transformed to camera space
-        
-        # get pitch, roll, yaw from IMU on FC
-        # measure the camera tilt
-        # check the imu pitch roll yaw return convention
+        self.mav = mav
 
+        self.g = np.array([0.0, 0.0, -1.0]) # representation of gravity in 3D world space, needs to be transformed to camera space
         self.camera_tilt = np.array([
             [np.cos(np.pi / 4), 0, np.sin(np.pi / 4)],
             [0, 1, 0],
             [-np.sin(np.pi / 4), 0, np.cos(np.pi / 4)]
         ], dtype=float)
 
-        self.pitch = np.array([
-            [np.cos(pitch), 0, np.sin(pitch)],
-            [0, 1, 0],
-            [-np.sin(pitch), 0, np.cos(pitch)]
-        ], dtype=float)
-
-        self.roll = np.array([
-            [1, 0, 0],
-            [0, np.cos(roll), -np.sin(roll)],
-            [0, np.sin(roll), np.cos(roll)]
-        ], dtype=float)
-
-        self.yaw = np.array([
-            [np.cos(yaw), -np.sin(yaw), 0],
-            [np.sin(yaw), np.cos(yaw), 0],
-            [0, 0, 1],
-        ], dtype=float)
-
-        quaternion = 
-        
-        self.gravity = self.camera_tilt @ (self.roll @ self.pitch @ self.g) # world -> body -> camera
-
-
-    
     def submit_job(self, job):
         if self.state.is_ransac_busy():
             return False
@@ -137,6 +110,28 @@ class RansacWorker:
 
     
     def run_job(self, job, thresh=50, n=300, thresh2=0.9):
+        # get pitch, roll, yaw from IMU on FC
+        # measure the camera tilt
+        # check the imu pitch roll yaw return convention
+        snap = self.state.snapshot()
+        pitch = snap["pitch"]
+        roll = snap["roll"]
+
+        pitch_transform = np.array([
+            [np.cos(pitch), 0, np.sin(pitch)],
+            [0, 1, 0],
+            [-np.sin(pitch), 0, np.cos(pitch)]
+        ], dtype=float)
+
+        roll_transform = np.array([
+            [1, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)]
+        ], dtype=float)
+
+        # TODO: Check camera axis direction to determine order of pitch and roll
+        gravity = self.camera_tilt @ (roll_transform @ pitch_transform @ self.g) # world -> body -> camera
+
         try:
             best_plane = None
 
