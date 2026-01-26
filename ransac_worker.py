@@ -1,5 +1,4 @@
 from pyorbbecsdk import *
-from math import sqrt
 from random import randint
 import cv2 as cv
 import numpy as np
@@ -11,11 +10,11 @@ class Plane:
         a = p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]
         b = p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]
 
-        self.n = [a[1]*b[2] - a[2]*b[1],
+        self.n = np.array([a[1]*b[2] - a[2]*b[1],
             a[2]*b[0] - a[0]*b[2],
-            a[0]*b[1] - a[1]*b[0]]
+            a[0]*b[1] - a[1]*b[0]], dtype=float)
         
-        self.normal = sqrt(self.n[0] ** 2 + self.n[1] ** 2 + self.n[2] ** 2)
+        self.normal = np.linalg.norm(self.n)
         
         self.A = self.n[0]
         self.B = self.n[1]
@@ -25,12 +24,17 @@ class Plane:
         self.inliers_uv = []
         self.inliers_xyz = []
 
-      
-    
-    def distance(self, p1): # returns None ==> collinear
-        x0, y0, z0 = p1      
 
-        return np.abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
+    def is_ground(self, gravity, thresh=0.8): # closer to 0 ==> more perpendicular to gravity
+        g_hat = gravity / np.linalg.norm(gravity)
+        n_hat = self.n / self.normal
+
+        return abs(np.dot(n_hat, g_hat)) >= thresh
+        
+    
+    def distance(self, p1): # returns None ==> collinear; p1 in the form (X, Y, Z, 1)
+        p2 = [self.A, self.B, self.C]
+        return np.abs((np.dot(p1, p2) + self.D) / self.normal)
 
     def get_hull(self):
         if len(self.inliers_uv) < 3:
@@ -38,6 +42,12 @@ class Plane:
 
         points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
         return cv.convexHull(points)
+
+
+class Wall:
+    def __init__(self, hull, normal):
+        self.hull = hull
+        self.normal = normal
     
 
 class RansacJob:
@@ -81,7 +91,41 @@ class RansacJob:
 class RansacWorker:
     def __init__(self, state):
         self.state = state
+        self.g = np.array([0.0, 0.0, -1.0]) # representation of gravity in 3D world space, needs to be transformed to camera space
         
+        # get pitch, roll, yaw from IMU on FC
+        # measure the camera tilt
+        # check the imu pitch roll yaw return convention
+
+        self.camera_tilt = np.array([
+            [np.cos(np.pi / 4), 0, np.sin(np.pi / 4)],
+            [0, 1, 0],
+            [-np.sin(np.pi / 4), 0, np.cos(np.pi / 4)]
+        ], dtype=float)
+
+        self.pitch = np.array([
+            [np.cos(pitch), 0, np.sin(pitch)],
+            [0, 1, 0],
+            [-np.sin(pitch), 0, np.cos(pitch)]
+        ], dtype=float)
+
+        self.roll = np.array([
+            [1, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)]
+        ], dtype=float)
+
+        self.yaw = np.array([
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw), np.cos(yaw), 0],
+            [0, 0, 1],
+        ], dtype=float)
+
+        quaternion = 
+        
+        self.gravity = self.camera_tilt @ (self.roll @ self.pitch @ self.g) # world -> body -> camera
+
+
     
     def submit_job(self, job):
         if self.state.is_ransac_busy():
@@ -91,7 +135,7 @@ class RansacWorker:
         Thread(target=self.run_job, args=(job, 50, 300, 0.9), daemon=True).start()
         return True
 
-        
+    
     def run_job(self, job, thresh=50, n=300, thresh2=0.9):
         try:
             best_plane = None
@@ -121,14 +165,19 @@ class RansacWorker:
                 plane.inliers_uv = job.uv[mask]
                 plane.inliers_xyz = job.xyz[mask]
 
+                # if plane.is_ground(self.gravity):
+                #     continue
+
                 if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):
                     best_plane = plane
 
             if best_plane is None or len(best_plane.inliers_uv) < 3:
                 self.state.clear_wall()
                 return None
+
+            wall = Wall(best_plane.get_hull(), best_plane.n / best_plane.normal)
+            self.state.update_wall(wall) # currently the wall is just a hull, fix this to include the normal too
             
-            self.state.update_wall(best_plane.get_hull())
             return best_plane
         
         except Exception as e:

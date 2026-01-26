@@ -2,6 +2,7 @@ from yolo_worker import YoloJob
 from ransac_worker import RansacJob
 import cv2 as cv
 
+
 class VisionApp:
     def __init__(self, camera, segmenter, yolo_worker, ransac_worker, state, renderer, app_config):
         self.camera =  camera

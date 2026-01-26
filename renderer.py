@@ -30,7 +30,8 @@ class Renderer:
                 cv.putText(image, "Searching for targets ... ", (30, 30), cv.FONT_HERSHEY_PLAIN, 2, color=(255, 0, 0), thickness=3)
             
             if plane:
-                hull = snapshot["wall"]
+                wall = snapshot["wall"]
+                hull = wall.hull
                 cv.drawContours(image, [hull], -1, (0, 255, 0), 2)
             
             cv.imshow("Live drone feed", image)
