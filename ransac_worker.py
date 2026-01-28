@@ -3,6 +3,7 @@ from random import randint
 import cv2 as cv
 import numpy as np
 from threading import Thread
+from time import time, sleep
 
 class Plane:
     # Ax + By + Cz + d = 0
@@ -21,6 +22,8 @@ class Plane:
         self.C = self.n[2]
         self.D = -(self.A * p1[0] + self.B * p1[1] + self.C * p1[2]) 
 
+        self.coeff = np.array([self.A, self.B, self.C, self.D]).reshape(1, 4)
+
         self.inliers_uv = []
         self.inliers_xyz = []
 
@@ -31,10 +34,14 @@ class Plane:
 
         return abs(np.dot(n_hat, g_hat)) >= thresh
         
-    
-    def distance(self, p1): # returns None ==> collinear; p1 in the form (X, Y, Z, 1)
-        p2 = [self.A, self.B, self.C]
-        return np.abs((np.dot(p1, p2) + self.D) / self.normal)
+
+    def distance(self, m2): # m2 in the form [X, Y, Z, 1]^T where X, Y, Z, and 1 are row vectors of length n
+        if self.normal <= 1e-6:
+            return None
+
+        return (abs(np.dot(self.coeff, m2)) / self.normal).ravel()
+
+        
 
     def get_hull(self):
         if len(self.inliers_uv) < 3:
@@ -71,11 +78,12 @@ class RansacJob:
                     continue
 
                 uv.append((u, v))
-                xyz.append((p.x, p.y, p.z))
+                xyz.append((p.x, p.y, p.z, 1))
 
         self.uv = np.array(uv, dtype=np.int32)
+        self.n = len(xyz)
         self.xyz = np.array(xyz, dtype=np.float32)
-
+        self.xyz_T = self.xyz.T
 
     # returns relative distance data for a pixel u, v
     # index array as y coord, x coord
@@ -113,9 +121,25 @@ class RansacWorker:
         # get pitch, roll, yaw from IMU on FC
         # measure the camera tilt
         # check the imu pitch roll yaw return convention
-        snap = self.state.snapshot()
-        pitch = snap["pitch"]
-        roll = snap["roll"]
+
+        wait_for_data = True
+        time_before = time()
+        max_time = 5.0 # seconds
+
+        while wait_for_data:  # wait for pitch and roll to arrive
+            snap = self.state.snapshot()
+            pitch = snap["pitch"]
+            roll = snap["roll"]
+            time_now = time()
+
+            wait_for_data = pitch is None or roll is None
+            timeout = time_now - time_before > max_time
+
+            if timeout:
+                self.state.set_ransac_busy(False)
+                return None
+            
+            sleep(0.02)
 
         pitch_transform = np.array([
             [np.cos(pitch), 0, np.sin(pitch)],
@@ -147,20 +171,22 @@ class RansacWorker:
                 p2_xyz = job.xyz[i2]
                 p3_xyz = job.xyz[i3]
 
-                plane = Plane(p1_xyz, p2_xyz, p3_xyz)
-                
-                if plane.A ** 2 + plane.B ** 2 + plane.C ** 2 <= 1e-6:
-                    continue
+                plane = Plane(p1_xyz[:3], p2_xyz[:3], p3_xyz[:3])
                 
                 # array of distances from each xyz coordinate to plane
-                distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                #distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                distances = plane.distance(job.xyz_T) 
+
+                if distances is None:
+                    continue
+
                 # filter for distances
                 mask = distances < thresh
                 # indexing just the uv's and xyz's that pass the filter
                 plane.inliers_uv = job.uv[mask]
                 plane.inliers_xyz = job.xyz[mask]
 
-                # if plane.is_ground(self.gravity):
+                # if plane.isdistances = _ground(self.gravity):
                 #     continue
 
                 if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):

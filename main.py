@@ -23,7 +23,7 @@ def run():
     rend = Renderer(app_config)
   
     mav.send_message(mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE, 50)
-    Thread(target=mav.run, args=("ATTITUDE",)).start()
+    Thread(target=mav.run, args=("ATTITUDE",), daemon=True).start()
 
     app = VisionApp(orbec_camera, segmenter, yolo, ransac, state, rend, app_config)
 
