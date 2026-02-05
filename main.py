@@ -8,6 +8,9 @@ from ransac_worker import RansacWorker
 from shared_state import SharedState
 from renderer import Renderer
 from sys import exit
+from threading import Thread
+from mavlink import Mavlink
+from pymavlink import mavutil
 
 def run():
     app_config = AppConfig("yolov10n.pt", "rp")
@@ -15,12 +18,15 @@ def run():
     segmenter = ColorSegmenter(app_config)
     state = SharedState()
     yolo = YoloWorker(state, app_config)
-    ransac = RansacWorker(state)
+    mav = Mavlink(state)
+    ransac = RansacWorker(state, mav)
     rend = Renderer(app_config)
+  
+    mav.send_message(mavutil.mavlink.MAVLINK_MSG_ID_ATTITUDE, 50)
+    Thread(target=mav.run, args=("ATTITUDE",), daemon=True).start()
 
     app = VisionApp(orbec_camera, segmenter, yolo, ransac, state, rend, app_config)
 
-    
     if not orbec_camera.start_and_sync():
         return
 

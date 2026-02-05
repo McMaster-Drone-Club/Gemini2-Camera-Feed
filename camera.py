@@ -128,5 +128,3 @@ class OrbbecCamera:
         else:
             print("Unsupported color format: {}".format(color_format))
             return None
-
- 
