@@ -1,4 +1,4 @@
-# Gemini2 Camera Feed – Vision Pipeline
+# Gemini2 Camera Feed – Vision Pipeline 
 
 Real-time vision pipeline for the **AEAC Fire Reconnaissance UAS Competition**, built around the **Orbbec Gemini 2 depth camera**.  
 The system performs **color circle detection**, **depth alignment**, and **plane estimation** under real-world lighting and compression.
