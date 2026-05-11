@@ -10,6 +10,22 @@ class Renderer:
     def render(self, image, snapshot, circle, plane):
         try:
             lm = snapshot["landmarks"]
+            detections = snapshot.get("detections", [])
+
+            for det in detections:
+                x1 = det["x1"]
+                y1 = det["y1"]
+                x2 = det["x2"]
+                y2 = det["y2"]
+                label = det["label"]
+
+                cv.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                (text_w, text_h), baseline = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                text_x = x1
+                text_y = max(y1 - 8, text_h + 8)
+                cv.rectangle(image, (text_x, text_y - text_h - baseline - 4), (text_x + text_w + 6, text_y + 2), (0, 0, 0), -1)
+                cv.putText(image, label, (text_x + 3, text_y - 2), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv.LINE_AA)
 
             if circle:
                 lm = snapshot["landmarks"]
@@ -43,7 +59,9 @@ class Renderer:
                         i += 1
             if plane:
                 hull = snapshot["wall"]
-                cv.drawContours(image, [hull], -1, (0, 255, 0), 2)
+                cv.drawContours(image, [hull], -1, (0, 255, 0), 3)
+                wall_text = "Wall plane"
+                cv.putText(image, wall_text, (30, image.shape[0] - 20), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv.LINE_AA)
             
             cv.imshow("Live drone feed", image)
         except Exception as e:

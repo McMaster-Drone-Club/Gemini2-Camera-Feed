@@ -36,11 +36,15 @@ class VisionApp:
             
             if none_count == len(self.top_circles):
                 self.no_circle_count += 1
-                snapshot = self.state.snapshot()
-                self.renderer.render(image, snapshot, False, False)
-                # Still run RANSAC even when no circle is detected to detect other objects
-                if self.frame_count % self.app_config.yolo_interval == 0:
+                if self.frame_count % self.app_config.ransac_interval == 0:
                     self.submit_ransac(self.frame_bundle, self.calibration, image)
+
+                if self.frame_count % self.app_config.yolo_interval == 0:
+                    self.submit_yolo(None, self.frame_bundle, self.calibration)
+
+                snapshot = self.state.snapshot()
+                has_wall = snapshot["wall"] is not None and len(snapshot["wall"]) > 0
+                self.renderer.render(image, snapshot, False, has_wall)
             else:
                 self.no_circle_count = 0
                 
@@ -49,8 +53,10 @@ class VisionApp:
                 best_circle = max(filtered_circles, key=lambda c: c.roundness)
 
                 # only run yolo on best circle in top_circles list
-                if self.frame_count % self.app_config.yolo_interval == 0:
+                if self.frame_count % self.app_config.ransac_interval == 0:
                     self.submit_ransac(self.frame_bundle, self.calibration, image)
+
+                if self.frame_count % self.app_config.yolo_interval == 0:
                     self.submit_yolo(best_circle, self.frame_bundle, self.calibration)
 
                 for circle in sorted_circles:
@@ -72,11 +78,7 @@ class VisionApp:
     def submit_yolo(self, circle, frame_bundle, calibration):
         try:
             if not self.state.is_busy():
-                # crop out circle
-                x, y, r = circle.x, circle.y, circle.r
-
                 image_copy = frame_bundle.color_image.copy()
-                cv.circle(image_copy, (x, y), r, (0, 0, 0), -1)
                 job = YoloJob(frame_bundle, circle, calibration, image_copy)
 
                 self.yolo_worker.submit_job(job)

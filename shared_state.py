@@ -4,6 +4,7 @@ from copy import deepcopy
 class SharedState:
     def __init__(self):
         self.landmarks = {}
+        self.detections = []
         self.last_circle_id = -1
         self.yolo_busy = False
         self.ransac_busy = False
@@ -38,6 +39,14 @@ class SharedState:
             self.landmarks.clear()
             self.last_circle_id = -1
 
+    def update_detections(self, detections):
+        with self.lock:
+            self.detections = detections
+
+    def clear_detections(self):
+        with self.lock:
+            self.detections = []
+
     def update_wall(self, wall):
         with self.ransac_lock:
             self.wall = wall
@@ -50,9 +59,11 @@ class SharedState:
         with self.lock:
             with self.ransac_lock:
                 landmarks = deepcopy(self.landmarks)
+                detections = deepcopy(self.detections)
 
                 return {
                     "landmarks" : landmarks,
+                    "detections" : detections,
                     "last_circle_id" : self.last_circle_id,
                     "yolo_busy" : self.yolo_busy,
                     "ransac_busy" : self.ransac_busy,

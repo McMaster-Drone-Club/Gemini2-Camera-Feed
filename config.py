@@ -6,8 +6,10 @@ class AppConfig():
         self.min_depth = 20  # 20mm
         self.max_depth = 10000  # 10000mm = 10 m
 
-        # run yolo every n frames upon target detection
-        self.yolo_interval = 20
+        # run yolo continuously (each frame attempt, while worker is free)
+        self.yolo_interval = 1
+        # run RANSAC continuously as well (worker busy guard prevents overlap)
+        self.ransac_interval = 1
         
         self.window_width = 1280
         self.window_height = 720

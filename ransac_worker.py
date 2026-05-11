@@ -39,6 +39,62 @@ class Plane:
         points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
         return cv.convexHull(points)
     
+    def is_ground(self, pitch=0.0, roll=0.0, threshold=0.85):
+        """
+        Accounts for drone pitch and roll.
+        
+        Uses dot product: if |n·g| ≈ 1, plane is horizontal (ground).
+                          if |n·g| ≈ 0, plane is vertical (wall).
+        
+        Args:
+            pitch: Drone pitch angle in radians (rotation around X-axis/right direction).
+                   Positive = nose up. Default 0 (level).
+            roll: Drone roll angle in radians (rotation around Z-axis/forward direction).
+                  Positive = right wing down. Default 0 (level).
+            threshold: Dot product threshold (0-1). Higher = more strict in identifying ground.
+                      0.85 means the plane normal must be within ~32 degrees of vertical.
+        
+        Returns:
+            True if plane is likely the ground, False if it's likely a wall.
+        """
+        if self.normal == 0:
+            return False
+        
+        # Start with gravity pointing down in camera frame: [0, 1, 0]
+        gravity_vec = np.array([0.0, 1.0, 0.0])
+        
+        # Apply drone pitch (rotation around X-axis)
+        # NOTE: When drone pitches up, ground plane normal shifts
+        cos_pitch = np.cos(pitch)
+        sin_pitch = np.sin(pitch)
+        pitch_transform = np.array([
+            [1.0, 0.0, 0.0],
+            [0.0, cos_pitch, -sin_pitch],
+            [0.0, sin_pitch, cos_pitch]
+        ])
+        
+        # drone roll -> ground plane normal shifts sideways
+        cos_roll = np.cos(roll)
+        sin_roll = np.sin(roll)
+        roll_transform = np.array([
+            [cos_roll, 0.0, sin_roll],
+            [0.0, 1.0, 0.0],
+            [-sin_roll, 0.0, cos_roll]
+        ])
+        
+        # roll first, then pitch (linear algebra works out this way)
+        combined_rotation = pitch_transform @ roll_transform
+        gravity_vec = combined_rotation @ gravity_vec
+        
+        normalized_normal = np.array([self.A, self.B, self.C]) / self.normal
+        
+        #  magntiude of dot product (up or down doesn't matter here)
+        dot_product = np.abs(np.dot(normalized_normal, gravity_vec))
+        
+        # If dp ~ 1, the plane is parallel to effective gravity (ground)
+        # If dp ~ 0, the plane is perpendicular to gravity (wall)
+        return dot_product > threshold
+    
 
 class RansacJob:
     def __init__(self, frame_bundle, calibration, image_array, sample_rate=8):
@@ -92,7 +148,7 @@ class RansacWorker:
         return True
 
         
-    def run_job(self, job, thresh=50, n=300, thresh2=0.9):
+    def run_job(self, job, thresh=50, n=300, thresh2=0.9, ground_threshold=0.85, pitch=0.0, roll=0.0):
         try:
             best_plane = None
 
@@ -111,6 +167,11 @@ class RansacWorker:
                 plane = Plane(p1_xyz, p2_xyz, p3_xyz)
                 
                 if plane.A ** 2 + plane.B ** 2 + plane.C ** 2 <= 1e-6:
+                    continue
+                
+                # Skip ground planes - we only want to detect walls
+                # Pass drone pitch and roll to account for tilted drone
+                if plane.is_ground(pitch=pitch, roll=roll, threshold=ground_threshold):
                     continue
                 
                 # array of distances from each xyz coordinate to plane
