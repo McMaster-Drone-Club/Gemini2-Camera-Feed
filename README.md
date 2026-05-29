@@ -5,7 +5,7 @@ The system performs **color circle detection**, **depth alignment**, and **plane
 
 ## Demo
 
-Click on this to watch the full video on youtube.
+This demo shows the Gemini 2 camera pipeline performing YOLO-assisted landmark detection, circle detection, depth visualization, and RANSAC-based plane estimation. Click on the photo to watch the full video on youtube.
 
 [![Gemini2 Camera Feed Demo](screenshot.png)](https://youtu.be/ukrB55_kECo)
 ---
