@@ -10,8 +10,7 @@ The system performs **color circle detection**, **depth alignment**, and **plane
 
 ## Demo
 
-https://github.com/McMaster-Drone-Club/Gemini2-Camera-Feed/blob/main/Gemini2CameraYOLO_Ransac_Demo.mp4
-
+[![Gemini2 Camera Feed Demo](screenshot.png)](https://youtu.be/ukrB55_kECo)
 ---
 
 ## What This Does
