@@ -7,6 +7,13 @@ The system performs **color circle detection**, **depth alignment**, and **plane
 
 ---
 
+
+## Demo
+
+https://github.com/McMaster-Drone-Club/Gemini2-Camera-Feed/blob/main/Gemini2CameraYOLO_Ransac_Demo.mp4
+
+---
+
 ## What This Does
 
 - Streams aligned color and depth from Orbbec Gemini 2  
@@ -63,6 +70,7 @@ Designed to be robust to:
 - **yolo_worker.py** - Optional YOLO landmark detection
 - **config.py** - Tunable parameters
 - **README.md** - This file
+- **Gemini2CameraYOLO_Ransac_Demo.mp4** - Demo video showing YOLO-assisted detection and RANSAC visualization
 
 ## Circle Detection Notes
 
