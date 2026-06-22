@@ -7,9 +7,13 @@ class SharedState:
         self.last_circle_id = -1
         self.yolo_busy = False
         self.ransac_busy = False
+        self.attitude_busy = False
         self.wall = None
         self.lock = Lock()
         self.ransac_lock = Lock()
+        self.attitude_lock = Lock()
+        self.pitch = None
+        self.roll = None
 
     def set_busy(self, busy=True):
         with self.lock:
@@ -46,16 +50,33 @@ class SharedState:
         with self.ransac_lock:
             self.wall = None
 
+    def update_attitude(self, pitch, roll):
+        with self.attitude_lock:
+            self.pitch = pitch
+            self.roll = roll
+
+    def clear_attitude(self):
+        with self.attitude_lock:
+            self.pitch = None
+            self.roll = None
+
+    def set_attitude_busy(self, busy=True):
+        with self.attitude_lock:
+            self.attitude_busy = busy
+
     def snapshot(self):
         with self.lock:
             with self.ransac_lock:
-                landmarks = deepcopy(self.landmarks)
+                with self.attitude_lock:
+                    landmarks = deepcopy(self.landmarks)
 
-                return {
-                    "landmarks" : landmarks,
-                    "last_circle_id" : self.last_circle_id,
-                    "yolo_busy" : self.yolo_busy,
-                    "ransac_busy" : self.ransac_busy,
-                    "wall" : self.wall
-                }
+                    return {
+                        "landmarks" : landmarks,
+                        "last_circle_id" : self.last_circle_id,
+                        "yolo_busy" : self.yolo_busy,
+                        "ransac_busy" : self.ransac_busy,
+                        "wall" : self.wall,
+                        "pitch" : self.pitch,
+                        "roll" : self.roll
+                    }
 

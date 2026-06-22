@@ -2,6 +2,7 @@ from yolo_worker import YoloJob
 from ransac_worker import RansacJob
 import cv2 as cv
 
+
 class VisionApp:
     def __init__(self, camera, segmenter, yolo_worker, ransac_worker, state, renderer, app_config):
         self.camera =  camera
@@ -58,7 +59,9 @@ class VisionApp:
 
                 snapshot = self.state.snapshot()
                 
-                if snapshot["wall"] is not None and len(snapshot["wall"]) > 0:
+                wall = snapshot["wall"]
+
+                if wall is not None and wall.hull is not None:
                     self.renderer.render(image, snapshot, True, True)
                 else:
                     self.renderer.render(image, snapshot, True, False)

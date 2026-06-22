@@ -1,9 +1,9 @@
 from pyorbbecsdk import *
-from math import sqrt
 from random import randint
 import cv2 as cv
 import numpy as np
 from threading import Thread
+from time import time, sleep
 
 class Plane:
     # Ax + By + Cz + d = 0
@@ -11,26 +11,37 @@ class Plane:
         a = p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]
         b = p3[0] - p2[0], p3[1] - p2[1], p3[2] - p2[2]
 
-        self.n = [a[1]*b[2] - a[2]*b[1],
+        self.n = np.array([a[1]*b[2] - a[2]*b[1],
             a[2]*b[0] - a[0]*b[2],
-            a[0]*b[1] - a[1]*b[0]]
+            a[0]*b[1] - a[1]*b[0]], dtype=float)
         
-        self.normal = sqrt(self.n[0] ** 2 + self.n[1] ** 2 + self.n[2] ** 2)
+        self.normal = np.linalg.norm(self.n)
         
         self.A = self.n[0]
         self.B = self.n[1]
         self.C = self.n[2]
         self.D = -(self.A * p1[0] + self.B * p1[1] + self.C * p1[2]) 
 
+        self.coeff = np.array([self.A, self.B, self.C, self.D]).reshape(1, 4)
+
         self.inliers_uv = []
         self.inliers_xyz = []
 
-      
-    
-    def distance(self, p1): # returns None ==> collinear
-        x0, y0, z0 = p1      
 
-        return np.abs(self.A * x0 + self.B * y0 + self.C * z0 + self.D) / self.normal
+    def is_ground(self, gravity, thresh=0.8): # closer to 0 ==> more perpendicular to gravity
+        g_hat = gravity / np.linalg.norm(gravity)
+        n_hat = self.n / self.normal
+
+        return abs(np.dot(n_hat, g_hat)) >= thresh
+        
+
+    def distance(self, m2): # m2 in the form [X, Y, Z, 1]^T where X, Y, Z, and 1 are row vectors of length n
+        if self.normal <= 1e-6:
+            return None
+
+        return (abs(np.dot(self.coeff, m2)) / self.normal).ravel()
+
+        
 
     def get_hull(self):
         if len(self.inliers_uv) < 3:
@@ -38,6 +49,12 @@ class Plane:
 
         points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
         return cv.convexHull(points)
+
+
+class Wall:
+    def __init__(self, hull, normal):
+        self.hull = hull
+        self.normal = normal
     
 
 class RansacJob:
@@ -61,11 +78,12 @@ class RansacJob:
                     continue
 
                 uv.append((u, v))
-                xyz.append((p.x, p.y, p.z))
+                xyz.append((p.x, p.y, p.z, 1))
 
         self.uv = np.array(uv, dtype=np.int32)
+        self.n = len(xyz)
         self.xyz = np.array(xyz, dtype=np.float32)
-
+        self.xyz_T = self.xyz.T
 
     # returns relative distance data for a pixel u, v
     # index array as y coord, x coord
@@ -79,10 +97,17 @@ class RansacJob:
 
 
 class RansacWorker:
-    def __init__(self, state):
+    def __init__(self, state, mav):
         self.state = state
-        
-    
+        self.mav = mav
+
+        self.g = np.array([0.0, 0.0, -1.0]) # representation of gravity in 3D world space, needs to be transformed to camera space
+        self.camera_tilt = np.array([
+            [np.cos(np.pi / 4), 0, np.sin(np.pi / 4)],
+            [0, 1, 0],
+            [-np.sin(np.pi / 4), 0, np.cos(np.pi / 4)]
+        ], dtype=float)
+
     def submit_job(self, job):
         if self.state.is_ransac_busy():
             return False
@@ -91,8 +116,46 @@ class RansacWorker:
         Thread(target=self.run_job, args=(job, 50, 300, 0.9), daemon=True).start()
         return True
 
-        
+    
     def run_job(self, job, thresh=50, n=300, thresh2=0.9):
+        # get pitch, roll, yaw from IMU on FC
+        # measure the camera tilt
+        # check the imu pitch roll yaw return convention
+
+        wait_for_data = True
+        time_before = time()
+        max_time = 5.0 # seconds
+
+        while wait_for_data:  # wait for pitch and roll to arrive
+            snap = self.state.snapshot()
+            pitch = snap["pitch"]
+            roll = snap["roll"]
+            time_now = time()
+
+            wait_for_data = pitch is None or roll is None
+            timeout = time_now - time_before > max_time
+
+            if timeout:
+                self.state.set_ransac_busy(False)
+                return None
+            
+            sleep(0.02)
+
+        pitch_transform = np.array([
+            [np.cos(pitch), 0, np.sin(pitch)],
+            [0, 1, 0],
+            [-np.sin(pitch), 0, np.cos(pitch)]
+        ], dtype=float)
+
+        roll_transform = np.array([
+            [1, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)]
+        ], dtype=float)
+
+        # TODO: Check camera axis direction to determine order of pitch and roll
+        gravity = self.camera_tilt @ (roll_transform @ pitch_transform @ self.g) # world -> body -> camera
+
         try:
             best_plane = None
 
@@ -108,18 +171,23 @@ class RansacWorker:
                 p2_xyz = job.xyz[i2]
                 p3_xyz = job.xyz[i3]
 
-                plane = Plane(p1_xyz, p2_xyz, p3_xyz)
-                
-                if plane.A ** 2 + plane.B ** 2 + plane.C ** 2 <= 1e-6:
-                    continue
+                plane = Plane(p1_xyz[:3], p2_xyz[:3], p3_xyz[:3])
                 
                 # array of distances from each xyz coordinate to plane
-                distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                #distances = plane.distance((job.xyz[:, 0], job.xyz[:, 1], job.xyz[:, 2]))
+                distances = plane.distance(job.xyz_T) 
+
+                if distances is None:
+                    continue
+
                 # filter for distances
                 mask = distances < thresh
                 # indexing just the uv's and xyz's that pass the filter
                 plane.inliers_uv = job.uv[mask]
                 plane.inliers_xyz = job.xyz[mask]
+
+                # if plane.isdistances = _ground(self.gravity):
+                #     continue
 
                 if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):
                     best_plane = plane
@@ -127,8 +195,10 @@ class RansacWorker:
             if best_plane is None or len(best_plane.inliers_uv) < 3:
                 self.state.clear_wall()
                 return None
+
+            wall = Wall(best_plane.get_hull(), best_plane.n / best_plane.normal)
+            self.state.update_wall(wall) # currently the wall is just a hull, fix this to include the normal too
             
-            self.state.update_wall(best_plane.get_hull())
             return best_plane
         
         except Exception as e:
@@ -141,13 +211,6 @@ class RansacWorker:
 
         
         
-        # pick 3 points from image array
-        # convert them to 3d coordintes
-        # compute the plane
-        # compute distance
-        #count points with distance < threshold (these are inliers)
-        #keep the plane with the most inliers
-
 
 """
 
