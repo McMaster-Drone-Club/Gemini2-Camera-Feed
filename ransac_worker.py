@@ -1,9 +1,71 @@
 from pyorbbecsdk import *
-from math import sqrt
+from math import sqrt,sin,cos,acos,degrees,radians
 from random import randint
 import cv2 as cv
 import numpy as np
 from threading import Thread
+import unittest
+
+
+class PlaneClassifier:
+    @staticmethod
+    def transform_normal(plane_normal, pitch_rad, roll_rad, cam_tilt_rad=0.0):
+        """
+        Transforms camera plane normal [A, B, C] into gravity-aligned world frame.
+        """
+        normal_vector = np.array(plane_normal, dtype=np.float64)
+        norm = np.linalg.norm(normal_vector)
+        if norm < 1e-6:
+            return None
+        normal_vector /= norm
+
+        #Map Camera Frame to Drone Frame 
+        # X_drone = Z_camera, Y_Drone = X_Camera, Z_Drone = Y_Camera
+        normal_vector = np.array([normal_vector[2], normal_vector[0], -normal_vector[1]])
+
+
+        #Apply fixed camera mounting pitch angle if present
+        if abs(cam_tilt_rad) > 1e-5:
+            R_tilt = np.array([
+                [cos(cam_tilt_rad), 0, sin(cam_tilt_rad)],
+                [0, 1, 0],
+                [-sin(cam_tilt_rad), 0, cos(cam_tilt_rad)]
+            ])
+            normal_vector = R_tilt @ normal_vector
+        #Apply IMU Pitch and Roll
+        Rx = np.array([
+            [1, 0, 0],
+            [0, cos(roll_rad), -sin(roll_rad)],
+            [0, sin(roll_rad), cos(roll_rad)]
+        ])
+        Ry = np.array([
+            [cos(pitch_rad), 0, sin(pitch_rad)],
+            [0, 1, 0],
+            [-sin(pitch_rad), 0, cos(pitch_rad)]
+        ])
+
+        return Ry @ (Rx @ normal_vector)
+    
+    @staticmethod
+    def classify(world_normal, floor_thresh_deg=15.0, wall_thresh_deg=15.0):
+        """
+        Classifies plane normal into wall, floor, ambiguous, or invalid.
+        """
+        if world_normal is None:
+            return "invalid"
+
+        # Abs dot product with gravity vector [0, 0, 1]
+        cos_angle = abs(world_normal[2])
+        cos_angle = np.clip(cos_angle, 0.0, 1.0)
+        angle_from_vertical = degrees(acos(cos_angle))
+
+        if angle_from_vertical <= floor_thresh_deg:
+            return "floor"
+        elif angle_from_vertical >= (90.0 - wall_thresh_deg):
+            return "wall"
+        else:
+            return "ambiguous"
+
 
 class Plane:
     # Ax + By + Cz + d = 0
@@ -25,8 +87,9 @@ class Plane:
         self.inliers_uv = []
         self.inliers_xyz = []
 
+        self.label = "unclassified"
+        self.confidence = 0.0
       
-    
     def distance(self, p1): # returns None ==> collinear
         x0, y0, z0 = p1      
 
@@ -38,8 +101,13 @@ class Plane:
 
         points = np.array(self.inliers_uv, dtype=np.int32).reshape(-1, 1, 2)
         return cv.convexHull(points)
-    
 
+    def classify_plane(self, pitch_rad, roll_rad, cam_tilt_rad=0.0):
+        world_normal = PlaneClassifier.transform_normal([self.A, self.B, self.C], pitch_rad, roll_rad, cam_tilt_rad)
+        self.label = PlaneClassifier.classify(world_normal)
+        return self.label    
+
+    
 class RansacJob:
     def __init__(self, frame_bundle, calibration, image_array, sample_rate=8):
         self.frame_bundle = frame_bundle
@@ -146,7 +214,63 @@ class RansacWorker:
         # compute the plane
         # compute distance
         #count points with distance < threshold (these are inliers)
-        #keep the plane with the most inliers
+        #keep the plane with the most inliers if wall with >90% certainty
+
+class TestPlaneClassifier(unittest.TestCase):
+
+    def test_level_floor_classification(self):
+        # Level hover over floor; surface normal points up (-Y in cam frame)
+        cam_n = [0, -1, 0]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "floor")
+
+    def test_level_front_wall_classification(self):
+        # Level hover facing front wall (-Z in cam frame)
+        cam_n = [0, 0, -1]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "wall")
+
+    def test_level_side_wall_classification(self):
+        # Level hover facing side wall (-X in cam frame)
+        cam_n = [-1, 0, 0]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "wall")
+
+    def test_pitched_drone_front_wall(self):
+        # Drone pitched down 20° facing front wall
+        pitch = radians(-20)
+        cam_n = [0, -sin(radians(20)), -cos(radians(20))]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=pitch, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "wall")
+
+    def test_rolled_drone_floor(self):
+        # Drone rolled right(CW) 15° over floor
+        roll = -radians(15)
+        cam_n = [-sin(radians(15)), -cos(radians(15)), 0]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=roll)
+        self.assertEqual(PlaneClassifier.classify(world_n), "floor")
+
+    def test_fixed_camera_mount_tilt(self):
+        # Level drone with camera mechanically tilted down 15°
+        cam_tilt = radians(15)
+        cam_n = [0, -cos(cam_tilt), -sin(cam_tilt)]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0, cam_tilt_rad=cam_tilt)
+        self.assertEqual(PlaneClassifier.classify(world_n), "floor")
+
+    def test_ambiguous_sloped_ramp(self):
+        # Level hover facing a 45° sloped surface
+        cam_n = [0, -cos(radians(45)), -sin(radians(45))]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "ambiguous")
+
+    def test_invalid_zero_normal(self):
+        # Degenerate zero normal input
+        cam_n = [0, 0, 0]
+        world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
+        self.assertEqual(PlaneClassifier.classify(world_n), "invalid")
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 """
