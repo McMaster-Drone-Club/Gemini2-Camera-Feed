@@ -105,7 +105,13 @@ class Plane:
     def classify_plane(self, pitch_rad, roll_rad, cam_tilt_rad=0.0):
         world_normal = PlaneClassifier.transform_normal([self.A, self.B, self.C], pitch_rad, roll_rad, cam_tilt_rad)
         self.label = PlaneClassifier.classify(world_normal)
-        return self.label    
+        return self.label  
+
+    def compute_metrics(self, total_points, distances_array, thresh):
+        #Detemrines confidence and root mean square error
+        self.confidence = len(self.inliers_xyz) / total_points if total_points > 0 else 0.0
+        inlier_dists = distances_array[distances_array < thresh]
+        self.rmse = float(np.sqrt(np.mean(inlier_dists**2))) if len(inlier_dists) > 0 else float('inf')  
 
     
 class RansacJob:
@@ -163,6 +169,7 @@ class RansacWorker:
     def run_job(self, job, thresh=50, n=300, thresh2=0.9):
         try:
             best_plane = None
+            best_distances = None
 
             for _ in range(n):
                 i1, i2, i3 = 0, 0, 0
@@ -191,13 +198,26 @@ class RansacWorker:
 
                 if best_plane is None or len(plane.inliers_uv) > len(best_plane.inliers_uv):
                     best_plane = plane
-
-            if best_plane is None or len(best_plane.inliers_uv) < 3:
+                    best_distances = distances
+        
+            if best_plane is None:
                 self.state.clear_wall()
                 return None
-            
-            self.state.update_wall(best_plane.get_hull())
+
+            #Retrieves attitude from shared state
+            pitch_rad,roll_rad,yaw_rad = self.state.get_attitude_angles()
+
+            #Classifies plane and determines confidence
+            label = best_plane.classify_plane(pitch_rad, roll_rad)
+            best_plane.compute_metrics(len(job.xyz), best_distances, thresh)
+
+            if label in ["ambiguous", "invalid"] or best_plane.confidence < 0.15 or best_plane.rmse > 30.0:
+                self.state.clear_wall()
+                return None
+    
+            self.state.update_wall(best_plane.get_hull(), label) 
             return best_plane
+
         
         except Exception as e:
             print("Failed to run RANSAC " + repr(e))
@@ -264,7 +284,7 @@ class TestPlaneClassifier(unittest.TestCase):
         self.assertEqual(PlaneClassifier.classify(world_n), "ambiguous")
 
     def test_invalid_zero_normal(self):
-        # Degenerate zero normal input
+        # zero normal input
         cam_n = [0, 0, 0]
         world_n = PlaneClassifier.transform_normal(cam_n, pitch_rad=0, roll_rad=0)
         self.assertEqual(PlaneClassifier.classify(world_n), "invalid")

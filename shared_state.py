@@ -1,5 +1,6 @@
 from threading import Lock
 from copy import deepcopy
+from math import atan2,asin
 
 class SharedState:
     def __init__(self):
@@ -8,8 +9,27 @@ class SharedState:
         self.yolo_busy = False
         self.ransac_busy = False
         self.wall = None
+        self.wall_label = None
+        self.attitude_quat = (0.0, 0.0, 0.0, 1.0) # x, y, z, w
         self.lock = Lock()
         self.ransac_lock = Lock()
+
+
+    def update_attitude(self, x, y, z, w):
+        with self.ransac_lock:
+            self.attitude_quat = (x, y, z, w)
+
+    def get_attitude_angles(self):
+        """Returns (pitch_rad, roll_rad, yaw_rad)"""
+        with self.ransac_lock:
+            x, y, z, w = self.attitude_quat
+            
+        # Standard Quaternion to Euler conversion
+        roll = atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+        pitch = asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
+        yaw = atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        
+        return pitch, roll, yaw
 
     def set_busy(self, busy=True):
         with self.lock:
@@ -38,9 +58,10 @@ class SharedState:
             self.landmarks.clear()
             self.last_circle_id = -1
 
-    def update_wall(self, wall):
+    def update_wall(self, wall, wall_label):
         with self.ransac_lock:
             self.wall = wall
+            self.wall_label = wall_label
 
     def clear_wall(self):
         with self.ransac_lock:
