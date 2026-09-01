@@ -47,6 +47,8 @@ Designed to be robust to:
    - Depth to 3D point conversion
    - RANSAC plane fitting
    - Convex hull of inliers
+   - Conversion of plane normals to global frame
+   - Labeling of planes as either Wall or Floor
 
 5. Visualization
    - Live feed with overlays
